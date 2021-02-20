@@ -242,6 +242,8 @@ void COXEventManager::GiveAutoOXReward()
 
 bool COXEventManager::LoadAutoOXSettings()
 {
+	m_reward.clear();
+	
 	char c_pszFileName[FILE_MAX_LEN];
 	snprintf(c_pszFileName, sizeof(c_pszFileName), "%s/auto_ox_settings.txt", LocaleService_GetBasePath().c_str());
 	auto loader = std::make_unique<CGroupTextParseTreeLoader>();
