@@ -38,6 +38,13 @@ private:
 	LPEVENT m_timedEvent = nullptr;
 #if defined(BL_AUTOMATIC_OXEVENT)
 	LPEVENT m_AutomaticOX = nullptr;
+	struct SReward
+	{
+		DWORD vnum;
+		std::uint8_t count;
+		DWORD gold;
+	};
+	std::unordered_map <std::uint8_t, std::vector<std::shared_ptr<SReward>>> m_reward;
 #endif
 
 	bool Enter(LPCHARACTER pChar, std::uint8_t bState);
@@ -68,8 +75,9 @@ public:
 #if defined(BL_AUTOMATIC_OXEVENT)
 	enum { DAY, HOUR, MIN };
 	enum EOXTIMER : std::uint8_t { SUNDAY, MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY };
-	void SetAutoOXSettings(const char* section, std::uint16_t val);
 	static const std::vector<std::tuple<EOXTIMER, int, int>> vScheduleOXTable;
+	bool LoadAutoOXSettings();
+	void GiveAutoOXReward();
 #endif
 
 	std::uint16_t GetAttenderCount() const;

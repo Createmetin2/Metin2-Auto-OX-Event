@@ -196,8 +196,8 @@ EVENTFUNC(oxevent_timer)
 }
 
 #if defined(BL_AUTOMATIC_OXEVENT)
-static std::uint16_t REWARD_VNUM = 299;
-static std::uint8_t REWARD_COUNT = 1;
+#include "group_text_parse_tree.h"
+
 static std::uint16_t REQUIRED_START_PLAYER_COUNT = 2;
 static std::uint16_t REQUIRED_LAST_PLAYER_COUNT = 1;
 
@@ -207,18 +207,107 @@ const std::vector<std::tuple<COXEventManager::EOXTIMER, int, int>> COXEventManag
 	std::make_tuple(EOXTIMER::THURSDAY, 21, 0),
 };
 
-void COXEventManager::SetAutoOXSettings(const char* section, std::uint16_t val)
+void COXEventManager::GiveAutoOXReward()
 {
-	if (!strcmp(section, "reward_vnum"))
-		REWARD_VNUM = val;
-	else if (!strcmp(section, "reward_count"))
-		REWARD_COUNT = static_cast<std::uint8_t>(val);
-	else if (!strcmp(section, "req_start_player"))
-		REQUIRED_START_PLAYER_COUNT = val;
-	else if (!strcmp(section, "req_end_player"))
-		REQUIRED_LAST_PLAYER_COUNT = val;
-	else
-		sys_err("Unknown auto ox setting section %s", section);
+	for (const auto& [pid, state] : m_common_ox) {
+		if (state & STATE_ATTENDER) {
+			auto pkChar = CHARACTER_MANAGER::instance().FindByPID(pid);
+			if (pkChar) {
+				auto it = m_reward.find(pkChar->GetJob());
+				if (it == m_reward.end())
+					continue;
+
+				const auto& vec = it->second;
+				if (vec.empty())
+					continue;
+
+				int iRand = number(0, static_cast<int>(vec.size()) - 1);
+				const auto& reward = vec.at(iRand);
+	
+				auto item = pkChar->AutoGiveItem(reward->vnum, reward->count);
+				if (item != nullptr) {
+					char msg[128];
+					snprintf(msg, sizeof(msg), "Winner: %s, Reward: %s(%dx)", pkChar->GetName(), item->GetName(), item->GetCount());
+					SendNoticeMap(msg, OXEVENT_MAP_INDEX, true);
+				}
+
+				pkChar->GiveGold(reward->gold);
+
+				if (pkChar->GetDesc())
+					LogManager::instance().ItemLog(pkChar->GetPlayerID(), 0, reward->count, reward->vnum, "OXEVENT_REWARD", "", pkChar->GetDesc()->GetHostName(), reward->vnum);
+			}
+		}
+	}
+}
+
+bool COXEventManager::LoadAutoOXSettings()
+{
+	char c_pszFileName[FILE_MAX_LEN];
+	snprintf(c_pszFileName, sizeof(c_pszFileName), "%s/auto_ox_settings.txt", LocaleService_GetBasePath().c_str());
+	auto loader = std::make_unique<CGroupTextParseTreeLoader>();
+
+	if (!loader->Load(c_pszFileName)) {
+		sys_err("%s: load error", c_pszFileName);
+		return false;
+	}
+
+	auto OxRewardGroup = loader->GetGroup("main");
+	if (!OxRewardGroup) {
+		sys_err("ox_reward.txt need main group.");
+		return false;
+	}
+
+	if (!OxRewardGroup->GetValue("req_start_player", 0, REQUIRED_START_PLAYER_COUNT)) {
+		sys_err("Group %s does not have req_start_player.", OxRewardGroup->GetNodeName().c_str());
+		return false;
+	}
+
+	if (!OxRewardGroup->GetValue("req_last_player", 0, REQUIRED_LAST_PLAYER_COUNT)) {
+		sys_err("Group %s does not have req_last_player.", OxRewardGroup->GetNodeName().c_str());
+		return false;
+	}
+
+	std::uint8_t job = 0;
+	for (const auto& v : { "warrior", "assassin", "sura", "shaman", "lycan" })
+	{
+		auto pItemGroup = OxRewardGroup->GetChildNode(v);
+		if (!pItemGroup)
+		{
+			sys_err("Group %s does not have %s group.", OxRewardGroup->GetNodeName().c_str(), v);
+			return false;
+		}
+
+		auto itemGroupSize = pItemGroup->GetRowCount();
+
+		for (int i = 0; i < itemGroupSize; i++)
+		{
+			auto r = std::make_shared<SReward>();
+
+			if (!pItemGroup->GetValue(i, "item", r->vnum))
+			{
+				sys_err("row(%d) of group items of group %s does not have item column", i, v);
+				return false;
+			}
+
+			if (!pItemGroup->GetValue(i, "count", r->count))
+			{
+				sys_err("row(%d) of group items of group %s does not have count column", i, v);
+				return false;
+			}
+
+			if (!pItemGroup->GetValue(i, "gold", r->gold))
+			{
+				sys_err("row(%d) of group items of group %s does not have gold column", i, v);
+				return false;
+			}
+
+			m_reward[job].emplace_back(std::move(r));
+		}
+
+		job++;
+	}
+
+	return true;
 }
 
 EVENTINFO(AutoOXEventInfoData)
@@ -257,6 +346,9 @@ EVENTFUNC(auto_oxevent_timer)
 
 			if (it != vTime.end()) {
 				OXManager->ClearQuiz();
+				if (OXManager->LoadAutoOXSettings() == false)
+					break;
+
 				static const auto sFileName = LocaleService_GetBasePath() + "/oxquiz.lua";
 				if (lua_dofile(quest::CQuestManager::instance().GetLuaState(), sFileName.c_str()) == 0) {
 					OXManager->SetStatus(OXEventStatus::OXEVENT_OPEN);
@@ -287,7 +379,7 @@ EVENTFUNC(auto_oxevent_timer)
 		{
 			if (OXManager->GetAttenderCount() <= REQUIRED_LAST_PLAYER_COUNT)
 			{
-				OXManager->GiveItemToAttender(REWARD_VNUM, REWARD_COUNT);
+				OXManager->GiveAutoOXReward();
 				OXManager->LogWinner();
 
 				SendNoticeMap("The OX event is over.", OXEVENT_MAP_INDEX, true);
@@ -390,6 +482,7 @@ void COXEventManager::Destroy()
 #if defined(BL_AUTOMATIC_OXEVENT)
 	if (m_AutomaticOX != nullptr)
 		event_cancel(&m_AutomaticOX);
+	m_reward.clear();
 #endif
 }
 
