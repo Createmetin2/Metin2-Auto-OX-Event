@@ -1,0 +1,1 @@
+#define BL_AUTOMATIC_OXEVENT
